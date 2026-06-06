@@ -12,14 +12,16 @@ from typing import cast
 
 from overrides import override
 
+from solidlsp import ls_types
 from solidlsp.ls import (
     LanguageServerDependencyProvider,
     LanguageServerDependencyProviderSinglePath,
+    LSPFileBuffer,
     SolidLanguageServer,
 )
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.ls_utils import PlatformId, PlatformUtils
-from solidlsp.lsp_protocol_handler import lsp_types
+from solidlsp.lsp_protocol_handler import lsp_types as protocol_lsp_types
 from solidlsp.lsp_protocol_handler.lsp_types import Definition, DefinitionParams, InitializeParams, LocationLink
 from solidlsp.settings import SolidLSPSettings
 
@@ -198,6 +200,14 @@ class PHPantomServer(SolidLanguageServer):
                     "hover": {"dynamicRegistration": True, "contentFormat": ["markdown", "plaintext"]},
                 },
                 "workspace": {
+                    "applyEdit": True,
+                    "workspaceEdit": {
+                        "documentChanges": True,
+                        "resourceOperations": ["create", "rename", "delete"],
+                        "failureHandling": "textOnlyTransactional",
+                        "normalizesLineEndings": True,
+                        "changeAnnotationSupport": {"groupsOnLabel": True},
+                    },
                     "workspaceFolders": True,
                     "didChangeConfiguration": {"dynamicRegistration": True},
                     "symbol": {"dynamicRegistration": True},
@@ -251,7 +261,7 @@ class PHPantomServer(SolidLanguageServer):
         self.server.notify.initialized({})
 
     @override
-    def _send_references_request(self, relative_file_path: str, line: int, column: int) -> list[lsp_types.Location] | None:
+    def _send_references_request(self, relative_file_path: str, line: int, column: int) -> list[protocol_lsp_types.Location] | None:
         # waiting for cross-file index updates
         sleep(1)
         return super()._send_references_request(relative_file_path, line, column)
@@ -261,3 +271,31 @@ class PHPantomServer(SolidLanguageServer):
         # waiting for cross-file index updates
         sleep(1)
         return super()._send_definition_request(definition_params)
+
+    @override
+    def request_hover(
+        self,
+        relative_file_path: str,
+        line: int,
+        column: int,
+        file_buffer: LSPFileBuffer | None = None,
+    ) -> ls_types.Hover | None:
+        # requesting direct hover info
+        hover = super().request_hover(relative_file_path, line, column, file_buffer=file_buffer)
+        if hover is not None:
+            return hover
+
+        # falling back to a usage-site hover
+        references = self.request_references(relative_file_path, line, column)
+        for reference in references:
+            ref_relative_path = reference.get("relativePath")
+            if ref_relative_path is None:
+                continue
+            start = reference["range"]["start"]
+            if ref_relative_path == relative_file_path and start["line"] == line and start["character"] == column:
+                continue
+            usage_hover = super().request_hover(ref_relative_path, start["line"], start["character"])
+            if usage_hover is not None:
+                return usage_hover
+
+        return None
