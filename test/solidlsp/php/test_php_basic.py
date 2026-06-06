@@ -225,7 +225,7 @@ class TestPhpLanguageServers:
         symbol_names = [sym.get("name") for sym in all_symbols[0] if sym.get("name")]
         assert "helperFunction" in symbol_names, f"helperFunction not found in document symbols. Found: {symbol_names}"
 
-    @pytest.mark.parametrize("language_server", [Language.PHP], indirect=True)
+    @pytest.mark.parametrize("language_server", [Language.PHP, Language.PHP_PHPANTOM], indirect=True)
     def test_document_symbols_hierarchical_structure(self, language_server: SolidLanguageServer) -> None:
         """Verify Intelephense returns hierarchical DocumentSymbol format.
 
@@ -235,9 +235,6 @@ class TestPhpLanguageServers:
         SymbolInformation[] list where all symbols appear at root level with no
         parent-child relationships.
         """
-        if _is_phpantom(language_server):
-            pytest.skip("PHPantom hierarchical document symbol behavior is not part of the v1 baseline")
-
         all_symbols, root_symbols = language_server.request_document_symbols("sample.php").get_all_symbols_and_roots()
 
         root_names = [s.get("name") for s in root_symbols]
@@ -269,9 +266,6 @@ class TestPhpLanguageServers:
         This validates that Intelephense responds correctly when symbols are requested
         for a single file, including class/method hierarchy in sample.php.
         """
-        if _is_phpantom(language_server):
-            pytest.skip("PHPantom symbol-tree shape beyond basic symbol sanity is not part of the v1 baseline")
-
         from solidlsp.ls_utils import SymbolUtils
 
         symbols = language_server.request_full_symbol_tree(within_relative_path="sample.php")

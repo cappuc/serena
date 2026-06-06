@@ -7,14 +7,20 @@ import os
 import pathlib
 import shutil
 import stat
+from time import sleep
 from typing import cast
 
 from overrides import override
 
-from solidlsp.ls import LanguageServerDependencyProvider, LanguageServerDependencyProviderSinglePath, SolidLanguageServer
+from solidlsp.ls import (
+    LanguageServerDependencyProvider,
+    LanguageServerDependencyProviderSinglePath,
+    SolidLanguageServer,
+)
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.ls_utils import PlatformId, PlatformUtils
-from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
+from solidlsp.lsp_protocol_handler import lsp_types
+from solidlsp.lsp_protocol_handler.lsp_types import Definition, DefinitionParams, InitializeParams, LocationLink
 from solidlsp.settings import SolidLSPSettings
 
 from .common import RuntimeDependency, RuntimeDependencyCollection
@@ -159,6 +165,7 @@ class PHPantomServer(SolidLanguageServer):
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
         super().__init__(config, repository_root_path, None, "php", solidlsp_settings)
+        self.request_id = 0
         self.language = Language.PHP_PHPANTOM
 
         self._ignored_dirnames = {"node_modules", "cache"}
@@ -174,11 +181,31 @@ class PHPantomServer(SolidLanguageServer):
         Returns the initialization params for the PHPantom Language Server.
         """
         root_uri = pathlib.Path(repository_absolute_path).as_uri()
+
+        # declaring client capabilities
         initialize_params = {
+            "locale": "en",
+            "capabilities": {
+                "textDocument": {
+                    "synchronization": {"didSave": True, "dynamicRegistration": True},
+                    "definition": {"dynamicRegistration": True},
+                    "references": {"dynamicRegistration": True},
+                    "documentSymbol": {
+                        "dynamicRegistration": True,
+                        "hierarchicalDocumentSymbolSupport": True,
+                        "symbolKind": {"valueSet": list(range(1, 27))},
+                    },
+                    "hover": {"dynamicRegistration": True, "contentFormat": ["markdown", "plaintext"]},
+                },
+                "workspace": {
+                    "workspaceFolders": True,
+                    "didChangeConfiguration": {"dynamicRegistration": True},
+                    "symbol": {"dynamicRegistration": True},
+                },
+            },
             "processId": os.getpid(),
             "rootPath": repository_absolute_path,
             "rootUri": root_uri,
-            "capabilities": {},
             "workspaceFolders": [
                 {
                     "uri": root_uri,
@@ -209,11 +236,28 @@ class PHPantomServer(SolidLanguageServer):
         self.server.start()
         initialize_params = self._get_initialize_params(self.repository_root_path)
 
+        # negotiating server capabilities
         log.info("Sending initialize request from LSP client to LSP server and awaiting response")
         init_response = self.server.send.initialize(initialize_params)
+        log.info("After sent initialize params")
 
-        capabilities = init_response.get("capabilities", {})
-        assert capabilities.get("definitionProvider"), "PHPantom did not advertise definition support"
+        capabilities = init_response["capabilities"]
+        assert "textDocumentSync" in capabilities
+        assert "completionProvider" in capabilities
+        assert "definitionProvider" in capabilities
+        assert "documentSymbolProvider" in capabilities, "Server must support document symbols"
         assert capabilities.get("referencesProvider"), "PHPantom did not advertise references support"
 
         self.server.notify.initialized({})
+
+    @override
+    def _send_references_request(self, relative_file_path: str, line: int, column: int) -> list[lsp_types.Location] | None:
+        # waiting for cross-file index updates
+        sleep(1)
+        return super()._send_references_request(relative_file_path, line, column)
+
+    @override
+    def _send_definition_request(self, definition_params: DefinitionParams) -> Definition | list[LocationLink] | None:
+        # waiting for cross-file index updates
+        sleep(1)
+        return super()._send_definition_request(definition_params)
